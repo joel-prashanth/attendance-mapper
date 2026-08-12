@@ -1,5 +1,7 @@
 .env
 node_modules/
+
 src/data/user-config.json
 src/data/profiles/
 src/data/profile-secrets.json
+src/data/audit/
