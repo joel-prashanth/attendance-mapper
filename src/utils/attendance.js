@@ -8,7 +8,8 @@ export function normalizeRegistrationNo(value) {
 export function normalizeAttendance(value) {
   const normalized = String(value ?? "")
     .trim()
-    .toLowerCase();
+    .toLowerCase()
+    .replace(/\s+/g, " ");
 
   if (normalized === "present" || normalized === "p" || normalized === "1") {
     return "PRESENT";
@@ -16,6 +17,15 @@ export function normalizeAttendance(value) {
 
   if (normalized === "absent" || normalized === "a" || normalized === "0") {
     return "ABSENT";
+  }
+
+  if (
+    normalized === "no class" ||
+    normalized === "no_class" ||
+    normalized === "noclass" ||
+    normalized === "no-class"
+  ) {
+    return "NO_CLASS";
   }
 
   return null;

@@ -1,20 +1,38 @@
 import readline from "readline/promises";
 
-import { stdin as input, stdout as output } from "process";
+import {
+  stdin as input,
+  stdout as output,
+} from "process";
 
-import { getRoster, submitAttendance } from "../services/erp.service.js";
+import {
+  getRoster,
+  submitAttendance,
+} from "../services/erp.service.js";
 
-import { getSheetStudents } from "../services/sheet.service.js";
+import {
+  getSheetStudents,
+} from "../services/sheet.service.js";
 
-import { matchAttendance } from "../services/matcher.service.js";
+import {
+  matchAttendance,
+} from "../services/matcher.service.js";
 
-import { buildAttendancePayload } from "../services/payload.service.js";
+import {
+  buildAttendancePayload,
+} from "../services/payload.service.js";
 
-import { writeAuditLog } from "../services/audit.service.js";
+import {
+  writeAuditLog,
+} from "../services/audit.service.js";
 
-import { getAttendanceDateValues } from "../utils/date.js";
+import {
+  getAttendanceDateValues,
+} from "../utils/date.js";
 
-import { validateSheet } from "../validators/sheet.validator.js";
+import {
+  validateSheet,
+} from "../validators/sheet.validator.js";
 
 import {
   isAttendanceAlreadyMarked,
@@ -32,56 +50,91 @@ export async function runAttendanceWorkflow({
   submitMode = false,
 }) {
   // ===================================================
-  // DUPLICATE ATTENDANCE PROTECTION
+  // 1. DUPLICATE ATTENDANCE PROTECTION
   // ===================================================
 
-  if (isAttendanceAlreadyMarked(session)) {
-    console.log("\n==============================");
+  if (
+    isAttendanceAlreadyMarked(
+      session,
+    )
+  ) {
+    console.log(
+      "\n==============================",
+    );
 
-    console.log(" ⚠️ ATTENDANCE ALREADY MARKED");
+    console.log(
+      " ⚠️ ATTENDANCE ALREADY MARKED",
+    );
 
-    console.log("==============================");
+    console.log(
+      "==============================",
+    );
 
-    console.log(`Subject : ${session.subjectName}`);
+    console.log(
+      `Subject : ${session.subjectName}`,
+    );
 
-    console.log(`Section : ${session.sectionCode}`);
+    console.log(
+      `Section : ${session.sectionCode}`,
+    );
 
-    console.log(`ERP total   : ${session.totalStudents ?? 0}`);
+    console.log(
+      `ERP total   : ${session.totalStudents ?? 0}`,
+    );
 
-    console.log(`ERP present : ${session.presentCount ?? 0}`);
+    console.log(
+      `ERP present : ${session.presentCount ?? 0}`,
+    );
 
-    console.log(`ERP absent  : ${session.absentCount ?? 0}`);
+    console.log(
+      `ERP absent  : ${session.absentCount ?? 0}`,
+    );
 
     writeAuditLog({
-      profileId: profile.id,
+      profileId:
+        profile.id,
 
-      faculty: profile.name,
+      faculty:
+        profile.name,
 
-      subject: session.subjectCode,
+      subject:
+        session.subjectCode,
 
-      section: session.sectionCode,
+      section:
+        session.sectionCode,
 
-      date: String(session.date ?? "").split("T")[0],
+      date:
+        String(
+          session.date ?? "",
+        ).split("T")[0],
 
-      status: "BLOCKED_ALREADY_MARKED",
+      status:
+        "BLOCKED_ALREADY_MARKED",
     });
 
     return;
   }
 
   // ===================================================
-  // DATE
+  // 2. DATE
   // ===================================================
 
-  const { attendanceDate, attendanceColumn } = getAttendanceDateValues(
-    session.date,
-  );
+  const {
+    attendanceDate,
+    attendanceColumn,
+  } =
+    getAttendanceDateValues(
+      session.date,
+    );
 
   // ===================================================
-  // CLASS → SHEET MAPPING
+  // 3. CLASS → SHEET MAPPING
   // ===================================================
 
-  const classMapping = profile.classMappings?.[session.sectionCode];
+  const classMapping =
+    profile.classMappings?.[
+      session.sectionCode
+    ];
 
   if (!classMapping) {
     throw new Error(
@@ -89,21 +142,32 @@ export async function runAttendanceWorkflow({
     );
   }
 
-  const sheetName = classMapping.sheetName;
+  const sheetName =
+    classMapping.sheetName;
 
   if (!sheetName) {
-    throw new Error(`Google Sheet tab is missing for ${session.sectionCode}.`);
+    throw new Error(
+      `Google Sheet tab is missing for ${session.sectionCode}.`,
+    );
   }
 
-  if (!profile.spreadsheetId) {
-    throw new Error(`Spreadsheet ID is missing for profile "${profile.name}".`);
+  if (
+    !profile.spreadsheetId
+  ) {
+    throw new Error(
+      `Spreadsheet ID is missing for profile "${profile.name}".`,
+    );
   }
 
   // ===================================================
-  // LOAD GOOGLE SHEET
+  // 4. LOAD GOOGLE SHEET
   // ===================================================
 
-  const rows = await getSheetStudents(profile.spreadsheetId, sheetName);
+  const rows =
+    await getSheetStudents(
+      profile.spreadsheetId,
+      sheetName,
+    );
 
   validateSheet({
     rows,
@@ -112,423 +176,855 @@ export async function runAttendanceWorkflow({
   });
 
   // ===================================================
-  // PREPARE GOOGLE SHEET STUDENTS
+  // 5. PREPARE GOOGLE SHEET STUDENTS
   // ===================================================
 
-  const sheetStudents = rows.map((row) => ({
-    registrationNo: row["Registration Number"],
+  const sheetStudents =
+    rows.map(
+      (row) => ({
+        registrationNo:
+          row[
+            "Registration Number"
+          ],
 
-    name: row["NAME AS PER SSC"],
+        name:
+          row[
+            "NAME AS PER SSC"
+          ],
 
-    [attendanceColumn]: row[attendanceColumn],
-  }));
+        [attendanceColumn]:
+          row[
+            attendanceColumn
+          ],
+      }),
+    );
 
   // ===================================================
-  // FETCH ERP ROSTER
+  // 6. FETCH ERP ROSTER
   // ===================================================
 
-  const erpStudents = await getRoster(
-    session.sectionId,
-    session.courseOfferingId,
-    cookie,
-  );
+  const erpStudents =
+    await getRoster(
+      session.sectionId,
+      session.courseOfferingId,
+      cookie,
+    );
 
-  if (!Array.isArray(erpStudents) || erpStudents.length === 0) {
-    throw new Error("ERP roster is empty or invalid.");
+  if (
+    !Array.isArray(
+      erpStudents,
+    ) ||
+    erpStudents.length === 0
+  ) {
+    throw new Error(
+      "ERP roster is empty or invalid.",
+    );
   }
 
   // ===================================================
-  // MATCH SHEET ↔ ERP
+  // 7. MATCH SHEET ↔ ERP
   // ===================================================
 
-  const result = matchAttendance({
-    sheetStudents,
-    erpStudents,
-    attendanceColumn,
-  });
-
-  const erpCoverage = (result.summary.matched / erpStudents.length) * 100;
+  const result =
+    matchAttendance({
+      sheetStudents,
+      erpStudents,
+      attendanceColumn,
+    });
 
   // ===================================================
-  // MAPPING CHECK
+  // 8. NO CLASS CHECK
   // ===================================================
 
-  console.log("\n==============================");
+  if (
+    result.allMatchedAreNoClass
+  ) {
+    console.log(
+      "\n==============================",
+    );
 
-  console.log(" SHEET ↔ ERP MAPPING CHECK");
+    console.log(
+      " ⛔ NO CLASS",
+    );
 
-  console.log("==============================");
+    console.log(
+      "==============================",
+    );
 
-  console.log(`Sheet students : ${result.summary.sheetStudents}`);
+    console.log(
+      `Faculty : ${profile.name}`,
+    );
 
-  console.log(`ERP students   : ${result.summary.erpStudents}`);
+    console.log(
+      `Subject : ${session.subjectName}`,
+    );
+
+    console.log(
+      `Section : ${session.sectionCode}`,
+    );
+
+    console.log(
+      `Sheet   : ${sheetName}`,
+    );
+
+    console.log(
+      `Date    : ${attendanceDate}`,
+    );
+
+    console.log();
+
+    console.log(
+      "The Google Sheet marks this date as NO CLASS.",
+    );
+
+    console.log(
+      "Attendance will not be submitted.",
+    );
+
+    writeAuditLog({
+      profileId:
+        profile.id,
+
+      faculty:
+        profile.name,
+
+      subject:
+        session.subjectCode,
+
+      section:
+        session.sectionCode,
+
+      date:
+        attendanceDate,
+
+      total:
+        erpStudents.length,
+
+      status:
+        "BLOCKED_NO_CLASS",
+    });
+
+    return;
+  }
+
+  // ===================================================
+  // 9. MIXED NO CLASS CHECK
+  // ===================================================
+
+  if (
+    result.mixedNoClass
+  ) {
+    console.log(
+      "\n==============================",
+    );
+
+    console.log(
+      " ❌ INCONSISTENT NO CLASS DATA",
+    );
+
+    console.log(
+      "==============================",
+    );
+
+    console.log(
+      `Faculty : ${profile.name}`,
+    );
+
+    console.log(
+      `Subject : ${session.subjectName}`,
+    );
+
+    console.log(
+      `Section : ${session.sectionCode}`,
+    );
+
+    console.log(
+      `Date    : ${attendanceDate}`,
+    );
+
+    console.log();
+
+    console.log(
+      `No Class : ${result.summary.noClass}`,
+    );
+
+    console.log(
+      `Present  : ${result.summary.present}`,
+    );
+
+    console.log(
+      `Absent   : ${result.summary.absent}`,
+    );
+
+    console.log();
+
+    console.log(
+      "The attendance column contains a mixture of NO CLASS and Present/Absent.",
+    );
+
+    console.log(
+      "Attendance will not be submitted.",
+    );
+
+    writeAuditLog({
+      profileId:
+        profile.id,
+
+      faculty:
+        profile.name,
+
+      subject:
+        session.subjectCode,
+
+      section:
+        session.sectionCode,
+
+      date:
+        attendanceDate,
+
+      present:
+        result.summary.present,
+
+      absent:
+        result.summary.absent,
+
+      noClass:
+        result.summary.noClass,
+
+      status:
+        "BLOCKED_MIXED_NO_CLASS",
+    });
+
+    return;
+  }
+
+  // ===================================================
+  // 10. ERP COVERAGE
+  // ===================================================
+
+  const erpCoverage =
+    (
+      result.summary.matched /
+      erpStudents.length
+    ) * 100;
+
+  // ===================================================
+  // 11. MAPPING CHECK
+  // ===================================================
+
+  console.log(
+    "\n==============================",
+  );
+
+  console.log(
+    " SHEET ↔ ERP MAPPING CHECK",
+  );
+
+  console.log(
+    "==============================",
+  );
+
+  console.log(
+    `Sheet students : ${result.summary.sheetStudents}`,
+  );
+
+  console.log(
+    `ERP students   : ${result.summary.erpStudents}`,
+  );
 
   console.log(
     `ERP matched    : ${result.summary.matched}/${result.summary.erpStudents}`,
   );
 
-  console.log(`Coverage       : ${erpCoverage.toFixed(2)}%`);
-
-  if (result.erpOnly.length > 0) {
-    console.log("\n❌ SHEET MAPPING REJECTED");
-
-    console.log("Not every ERP student exists in the mapped Google Sheet.");
-
-    writeAuditLog({
-      profileId: profile.id,
-
-      faculty: profile.name,
-
-      subject: session.subjectCode,
-
-      section: session.sectionCode,
-
-      date: attendanceDate,
-
-      status: "BLOCKED_ROSTER_MISMATCH",
-
-      erpStudents: result.summary.erpStudents,
-
-      matched: result.summary.matched,
-
-      erpOnly: result.summary.erpOnly,
-    });
-
-    return;
-  }
-
-  console.log("\n✅ Sheet mapping verified");
-
-  // ===================================================
-  // ATTENDANCE VALIDATION
-  // ===================================================
-
-  console.log("\n==============================");
-
-  console.log(" ATTENDANCE VALIDATION");
-
-  console.log("==============================");
-
-  console.log(`Faculty : ${profile.name}`);
-
-  console.log(`Subject : ${session.subjectName}`);
-
-  console.log(`Section : ${session.sectionCode}`);
-
-  console.log(`Sheet   : ${sheetName}`);
-
-  console.log(`Date    : ${attendanceDate}`);
-
-  console.log();
-
-  console.log(`Google Sheet : ${result.summary.sheetStudents}`);
-
-  console.log(`ERP Roster   : ${result.summary.erpStudents}`);
-
-  console.log(`Matched      : ${result.summary.matched}`);
-
-  console.log(`Sheet Only   : ${result.summary.sheetOnly}`);
-
-  console.log(`ERP Only     : ${result.summary.erpOnly}`);
-
-  console.log();
-
-  console.log(`Present      : ${result.summary.present}`);
-
-  console.log(`Absent       : ${result.summary.absent}`);
-
-  console.log(`Blank/Invalid: ${result.summary.invalidAttendance}`);
-
-  // ===================================================
-  // ABSENTEES
-  // ===================================================
-
-  const absentees = result.matched.filter(
-    (student) => student.attendance === "ABSENT",
+  console.log(
+    `Coverage       : ${erpCoverage.toFixed(2)}%`,
   );
 
-  if (absentees.length > 0) {
-    console.log("\n--- ABSENTEES ---");
+  if (
+    result.erpOnly.length > 0
+  ) {
+    console.log(
+      "\n❌ SHEET MAPPING REJECTED",
+    );
 
-    for (const student of absentees) {
-      console.log(`${student.registrationNo} | ${student.name}`);
-    }
-  }
-
-  // ===================================================
-  // SHEET-ONLY INFORMATION
-  // ===================================================
-
-  if (result.sheetOnly.length > 0) {
-    console.log("\n⚠️ SHEET-ONLY STUDENTS (IGNORED)");
-
-    for (const student of result.sheetOnly) {
-      console.log(`${student.registrationNo} | ${student.name}`);
-    }
-  }
-
-  // ===================================================
-  // HARD SAFETY CHECK
-  // ===================================================
-
-  const safeToSubmit = canSubmitAttendance({
-    result,
-    erpStudents,
-  });
-
-  if (!safeToSubmit) {
-    console.log("\n==============================");
-
-    console.log("❌ VALIDATION FAILED");
-
-    console.log("==============================");
-
-    console.log("Attendance will NOT be submitted.");
+    console.log(
+      "Not every ERP student exists in the mapped Google Sheet.",
+    );
 
     writeAuditLog({
-      profileId: profile.id,
+      profileId:
+        profile.id,
 
-      faculty: profile.name,
+      faculty:
+        profile.name,
 
-      subject: session.subjectCode,
+      subject:
+        session.subjectCode,
 
-      section: session.sectionCode,
+      section:
+        session.sectionCode,
 
-      date: attendanceDate,
+      date:
+        attendanceDate,
 
-      present: result.summary.present,
+      status:
+        "BLOCKED_ROSTER_MISMATCH",
 
-      absent: result.summary.absent,
+      erpStudents:
+        result.summary.erpStudents,
 
-      total: result.records.length,
+      matched:
+        result.summary.matched,
 
-      invalidAttendance: result.summary.invalidAttendance,
-
-      erpOnly: result.summary.erpOnly,
-
-      status: "BLOCKED_VALIDATION",
+      erpOnly:
+        result.summary.erpOnly,
     });
 
     return;
   }
 
-  console.log("\n==============================");
-
-  console.log("✅ VALIDATION PASSED");
-
-  console.log("==============================");
+  console.log(
+    "\n✅ Sheet mapping verified",
+  );
 
   // ===================================================
-  // BUILD PAYLOAD
+  // 12. ATTENDANCE VALIDATION
   // ===================================================
 
-  const payload = buildAttendancePayload({
-    timetableEntryId: session.timetableEntryId,
+  console.log(
+    "\n==============================",
+  );
 
-    date: attendanceDate,
+  console.log(
+    " ATTENDANCE VALIDATION",
+  );
 
-    slotId: session.slotId,
+  console.log(
+    "==============================",
+  );
 
-    records: result.records,
-  });
+  console.log(
+    `Faculty : ${profile.name}`,
+  );
+
+  console.log(
+    `Subject : ${session.subjectName}`,
+  );
+
+  console.log(
+    `Section : ${session.sectionCode}`,
+  );
+
+  console.log(
+    `Sheet   : ${sheetName}`,
+  );
+
+  console.log(
+    `Date    : ${attendanceDate}`,
+  );
+
+  console.log();
+
+  console.log(
+    `Google Sheet : ${result.summary.sheetStudents}`,
+  );
+
+  console.log(
+    `ERP Roster   : ${result.summary.erpStudents}`,
+  );
+
+  console.log(
+    `Matched      : ${result.summary.matched}`,
+  );
+
+  console.log(
+    `Sheet Only   : ${result.summary.sheetOnly}`,
+  );
+
+  console.log(
+    `ERP Only     : ${result.summary.erpOnly}`,
+  );
+
+  console.log();
+
+  console.log(
+    `Present      : ${result.summary.present}`,
+  );
+
+  console.log(
+    `Absent       : ${result.summary.absent}`,
+  );
+
+  console.log(
+    `No Class     : ${result.summary.noClass}`,
+  );
+
+  console.log(
+    `Blank/Invalid: ${result.summary.invalidAttendance}`,
+  );
 
   // ===================================================
-  // DRY RUN
+  // 13. ABSENTEES
+  // ===================================================
+
+  const absentees =
+    result.matched.filter(
+      (student) =>
+        student.attendance ===
+        "ABSENT",
+    );
+
+  if (
+    absentees.length > 0
+  ) {
+    console.log(
+      "\n--- ABSENTEES ---",
+    );
+
+    for (
+      const student
+      of absentees
+    ) {
+      console.log(
+        `${student.registrationNo} | ${student.name}`,
+      );
+    }
+  }
+
+  // ===================================================
+  // 14. SHEET-ONLY INFORMATION
+  // ===================================================
+
+  if (
+    result.sheetOnly.length > 0
+  ) {
+    console.log(
+      "\n⚠️ SHEET-ONLY STUDENTS (IGNORED)",
+    );
+
+    for (
+      const student
+      of result.sheetOnly
+    ) {
+      console.log(
+        `${student.registrationNo} | ${student.name}`,
+      );
+    }
+  }
+
+  // ===================================================
+  // 15. HARD SAFETY CHECK
+  // ===================================================
+
+  const safeToSubmit =
+    canSubmitAttendance({
+      result,
+      erpStudents,
+    });
+
+  if (!safeToSubmit) {
+    console.log(
+      "\n==============================",
+    );
+
+    console.log(
+      "❌ VALIDATION FAILED",
+    );
+
+    console.log(
+      "==============================",
+    );
+
+    console.log(
+      "Attendance will NOT be submitted.",
+    );
+
+    writeAuditLog({
+      profileId:
+        profile.id,
+
+      faculty:
+        profile.name,
+
+      subject:
+        session.subjectCode,
+
+      section:
+        session.sectionCode,
+
+      date:
+        attendanceDate,
+
+      present:
+        result.summary.present,
+
+      absent:
+        result.summary.absent,
+
+      noClass:
+        result.summary.noClass,
+
+      total:
+        result.records.length,
+
+      invalidAttendance:
+        result.summary.invalidAttendance,
+
+      erpOnly:
+        result.summary.erpOnly,
+
+      status:
+        "BLOCKED_VALIDATION",
+    });
+
+    return;
+  }
+
+  console.log(
+    "\n==============================",
+  );
+
+  console.log(
+    "✅ VALIDATION PASSED",
+  );
+
+  console.log(
+    "==============================",
+  );
+
+  // ===================================================
+  // 16. BUILD PAYLOAD
+  // ===================================================
+
+  const payload =
+    buildAttendancePayload({
+      timetableEntryId:
+        session.timetableEntryId,
+
+      date:
+        attendanceDate,
+
+      slotId:
+        session.slotId,
+
+      records:
+        result.records,
+    });
+
+  // ===================================================
+  // 17. DRY RUN
   // ===================================================
 
   if (!submitMode) {
     writeAuditLog({
-      profileId: profile.id,
+      profileId:
+        profile.id,
 
-      faculty: profile.name,
+      faculty:
+        profile.name,
 
-      subject: session.subjectCode,
+      subject:
+        session.subjectCode,
 
-      section: session.sectionCode,
+      section:
+        session.sectionCode,
 
-      date: attendanceDate,
+      date:
+        attendanceDate,
 
-      present: result.summary.present,
+      present:
+        result.summary.present,
 
-      absent: result.summary.absent,
+      absent:
+        result.summary.absent,
 
-      total: result.records.length,
+      noClass:
+        result.summary.noClass,
 
-      status: "DRY_RUN_VALIDATED",
+      total:
+        result.records.length,
+
+      status:
+        "DRY_RUN_VALIDATED",
     });
 
-    console.log("\n🚫 DRY RUN ONLY — NOTHING SENT TO ERP");
+    console.log(
+      "\n🚫 DRY RUN ONLY — NOTHING SENT TO ERP",
+    );
 
-    console.log("\nTo submit attendance explicitly:");
+    console.log(
+      "\nTo submit attendance explicitly:",
+    );
 
-    console.log("npm start -- --submit");
+    console.log(
+      "npm start -- --submit",
+    );
 
     return;
   }
 
   // ===================================================
-  // FINAL HUMAN CONFIRMATION
+  // 18. FINAL HUMAN CONFIRMATION
   // ===================================================
 
-  console.log("\n==============================");
+  console.log(
+    "\n==============================",
+  );
 
-  console.log(" ⚠️ FINAL SUBMISSION");
+  console.log(
+    " ⚠️ FINAL SUBMISSION",
+  );
 
-  console.log("==============================");
+  console.log(
+    "==============================",
+  );
 
-  console.log(`Faculty : ${profile.name}`);
+  console.log(
+    `Faculty : ${profile.name}`,
+  );
 
-  console.log(`Subject : ${session.subjectName}`);
+  console.log(
+    `Subject : ${session.subjectName}`,
+  );
 
-  console.log(`Section : ${session.sectionCode}`);
+  console.log(
+    `Section : ${session.sectionCode}`,
+  );
 
-  console.log(`Time    : ${session.startTime} - ${session.endTime}`);
+  console.log(
+    `Time    : ${session.startTime} - ${session.endTime}`,
+  );
 
-  console.log(`Date    : ${attendanceDate}`);
+  console.log(
+    `Date    : ${attendanceDate}`,
+  );
 
   console.log();
 
-  console.log(`Present : ${result.summary.present}`);
+  console.log(
+    `Present : ${result.summary.present}`,
+  );
 
-  console.log(`Absent  : ${result.summary.absent}`);
+  console.log(
+    `Absent  : ${result.summary.absent}`,
+  );
 
-  console.log(`Total   : ${result.records.length}`);
+  console.log(
+    `Total   : ${result.records.length}`,
+  );
 
-  const rl = readline.createInterface({
-    input,
-    output,
-  });
+  const rl =
+    readline.createInterface({
+      input,
+      output,
+    });
 
-  const answer = await rl.question("\nType SUBMIT to mark attendance: ");
+  const answer =
+    await rl.question(
+      "\nType SUBMIT to mark attendance: ",
+    );
 
   rl.close();
 
-  if (answer.trim() !== "SUBMIT") {
+  if (
+    answer.trim() !==
+    "SUBMIT"
+  ) {
     writeAuditLog({
-      profileId: profile.id,
+      profileId:
+        profile.id,
 
-      faculty: profile.name,
+      faculty:
+        profile.name,
 
-      subject: session.subjectCode,
+      subject:
+        session.subjectCode,
 
-      section: session.sectionCode,
+      section:
+        session.sectionCode,
 
-      date: attendanceDate,
+      date:
+        attendanceDate,
 
-      present: result.summary.present,
+      present:
+        result.summary.present,
 
-      absent: result.summary.absent,
+      absent:
+        result.summary.absent,
 
-      total: result.records.length,
+      total:
+        result.records.length,
 
-      status: "SUBMISSION_CANCELLED",
+      status:
+        "SUBMISSION_CANCELLED",
     });
 
-    console.log("\n❌ Submission cancelled.");
+    console.log(
+      "\n❌ Submission cancelled.",
+    );
 
     return;
   }
 
   // ===================================================
-  // SUBMIT TO ERP
+  // 19. SUBMIT TO ERP
   // ===================================================
 
-  console.log("\nSubmitting attendance...");
+  console.log(
+    "\nSubmitting attendance...",
+  );
 
-  const response = await submitAttendance(payload, cookie);
+  const response =
+    await submitAttendance(
+      payload,
+      cookie,
+    );
 
-  const data = response.data;
+  const data =
+    response.data;
 
   if (!data) {
-    throw new Error("ERP returned no attendance data.");
+    throw new Error(
+      "ERP returned no attendance data.",
+    );
   }
 
   // ===================================================
-  // ERP RESPONSE VERIFICATION
+  // 20. ERP RESPONSE VERIFICATION
   // ===================================================
 
-  console.log("\n==============================");
+  console.log(
+    "\n==============================",
+  );
 
-  console.log(" ERP RESPONSE");
+  console.log(
+    " ERP RESPONSE",
+  );
 
-  console.log("==============================");
+  console.log(
+    "==============================",
+  );
 
-  console.log(`Success: ${response.success}`);
+  console.log(
+    `Success: ${response.success}`,
+  );
 
-  console.log(`Message: ${response.message ?? ""}`);
+  console.log(
+    `Message: ${response.message ?? ""}`,
+  );
 
-  console.log(`ERP total   : ${data.totalStudents}`);
+  console.log(
+    `ERP total   : ${data.totalStudents}`,
+  );
 
-  console.log(`ERP present : ${data.presentCount}`);
+  console.log(
+    `ERP present : ${data.presentCount}`,
+  );
 
-  console.log(`ERP absent  : ${data.absentCount}`);
+  console.log(
+    `ERP absent  : ${data.absentCount}`,
+  );
 
   const countsMatch =
-    data.totalStudents === result.records.length &&
-    data.presentCount === result.summary.present &&
-    data.absentCount === result.summary.absent;
+    data.totalStudents ===
+      result.records.length &&
+    data.presentCount ===
+      result.summary.present &&
+    data.absentCount ===
+      result.summary.absent;
 
   if (!countsMatch) {
     writeAuditLog({
-      profileId: profile.id,
+      profileId:
+        profile.id,
 
-      faculty: profile.name,
+      faculty:
+        profile.name,
 
-      subject: session.subjectCode,
+      subject:
+        session.subjectCode,
 
-      section: session.sectionCode,
+      section:
+        session.sectionCode,
 
-      date: attendanceDate,
+      date:
+        attendanceDate,
 
-      present: result.summary.present,
+      present:
+        result.summary.present,
 
-      absent: result.summary.absent,
+      absent:
+        result.summary.absent,
 
-      total: result.records.length,
+      total:
+        result.records.length,
 
-      erpPresent: data.presentCount,
+      erpPresent:
+        data.presentCount,
 
-      erpAbsent: data.absentCount,
+      erpAbsent:
+        data.absentCount,
 
-      erpTotal: data.totalStudents,
+      erpTotal:
+        data.totalStudents,
 
-      status: "SUBMITTED_COUNT_MISMATCH",
+      status:
+        "SUBMITTED_COUNT_MISMATCH",
     });
 
-    console.log("\n⚠️ ATTENDANCE SAVED BUT COUNTS DO NOT MATCH LOCAL DATA");
+    console.log(
+      "\n⚠️ ATTENDANCE SAVED BUT COUNTS DO NOT MATCH LOCAL DATA",
+    );
 
     return;
   }
 
   // ===================================================
-  // SUCCESS AUDIT
+  // 21. SUCCESS AUDIT
   // ===================================================
 
   writeAuditLog({
-    profileId: profile.id,
+    profileId:
+      profile.id,
 
-    faculty: profile.name,
+    faculty:
+      profile.name,
 
-    subject: session.subjectCode,
+    subject:
+      session.subjectCode,
 
-    section: session.sectionCode,
+    section:
+      session.sectionCode,
 
-    date: attendanceDate,
+    date:
+      attendanceDate,
 
-    present: result.summary.present,
+    present:
+      result.summary.present,
 
-    absent: result.summary.absent,
+    absent:
+      result.summary.absent,
 
-    total: result.records.length,
+    total:
+      result.records.length,
 
-    status: "SUBMITTED",
+    status:
+      "SUBMITTED",
   });
 
-  console.log("\n==============================");
+  console.log(
+    "\n==============================",
+  );
 
-  console.log("✅ ATTENDANCE SUBMITTED");
+  console.log(
+    "✅ ATTENDANCE SUBMITTED",
+  );
 
-  console.log("==============================");
+  console.log(
+    "==============================",
+  );
 
-  console.log("ERP response matches Google Sheet attendance.");
+  console.log(
+    "ERP response matches Google Sheet attendance.",
+  );
 }

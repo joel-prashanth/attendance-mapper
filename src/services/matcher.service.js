@@ -8,88 +8,202 @@ export function matchAttendance({
   erpStudents,
   attendanceColumn,
 }) {
+  if (!Array.isArray(sheetStudents)) {
+    throw new Error("sheetStudents must be an array.");
+  }
+
+  if (!Array.isArray(erpStudents)) {
+    throw new Error("erpStudents must be an array.");
+  }
+
+  if (!attendanceColumn) {
+    throw new Error("attendanceColumn is required.");
+  }
+
+  // =====================================================
+  // BUILD SHEET MAP
+  // =====================================================
+
   const sheetMap = new Map();
 
   for (const student of sheetStudents) {
     const registrationNo = normalizeRegistrationNo(student.registrationNo);
 
-    if (!registrationNo) continue;
+    if (!registrationNo) {
+      continue;
+    }
 
     sheetMap.set(registrationNo, student);
   }
+
+  // =====================================================
+  // BUILD ERP MAP
+  // =====================================================
 
   const erpMap = new Map();
 
   for (const student of erpStudents) {
     const registrationNo = normalizeRegistrationNo(student.registrationNo);
 
-    if (!registrationNo) continue;
+    if (!registrationNo) {
+      continue;
+    }
 
     erpMap.set(registrationNo, student);
   }
 
+  // =====================================================
+  // RESULT COLLECTIONS
+  // =====================================================
+
   const matched = [];
-  const erpOnly = [];
+
   const sheetOnly = [];
 
-  for (const erpStudent of erpStudents) {
-    const registrationNo = normalizeRegistrationNo(erpStudent.registrationNo);
+  const erpOnly = [];
 
+  const invalidAttendance = [];
+
+  const noClass = [];
+
+  const records = [];
+
+  // =====================================================
+  // MATCH ERP STUDENTS AGAINST SHEET
+  // =====================================================
+
+  for (const [registrationNo, erpStudent] of erpMap) {
     const sheetStudent = sheetMap.get(registrationNo);
 
     if (!sheetStudent) {
       erpOnly.push(erpStudent);
+
       continue;
     }
 
-    const attendance = normalizeAttendance(sheetStudent[attendanceColumn]);
+    const rawAttendance = sheetStudent[attendanceColumn];
 
-    matched.push({
+    const attendance = normalizeAttendance(rawAttendance);
+
+    const matchedStudent = {
       registrationNo,
+
+      name: sheetStudent.name,
+
       studentId: erpStudent.studentId,
 
-      name: `${erpStudent.firstName ?? ""} ${erpStudent.lastName ?? ""}`.trim(),
-
-      sheetName: sheetStudent.name,
-
       attendance,
+
+      rawAttendance,
+
+      erpStudent,
+
+      sheetStudent,
+    };
+
+    matched.push(matchedStudent);
+
+    // =================================================
+    // NO CLASS
+    // =================================================
+
+    if (attendance === "NO_CLASS") {
+      noClass.push(matchedStudent);
+
+      continue;
+    }
+
+    // =================================================
+    // INVALID / BLANK
+    // =================================================
+
+    if (!attendance) {
+      invalidAttendance.push(matchedStudent);
+
+      continue;
+    }
+
+    // =================================================
+    // VALID ERP RECORD
+    // =================================================
+
+    records.push({
+      studentId: erpStudent.studentId,
+
+      status: attendance,
     });
   }
 
-  for (const sheetStudent of sheetStudents) {
-    const registrationNo = normalizeRegistrationNo(sheetStudent.registrationNo);
+  // =====================================================
+  // SHEET-ONLY STUDENTS
+  // =====================================================
 
+  for (const [registrationNo, sheetStudent] of sheetMap) {
     if (!erpMap.has(registrationNo)) {
-      sheetOnly.push(sheetStudent);
+      sheetOnly.push({
+        registrationNo,
+
+        name: sheetStudent.name,
+
+        ...sheetStudent,
+      });
     }
   }
 
-  const invalidAttendance = matched.filter((student) => !student.attendance);
+  // =====================================================
+  // COUNTS
+  // =====================================================
 
-  const records = matched
-    .filter((student) => student.attendance)
-    .map((student) => ({
-      studentId: student.studentId,
-      status: student.attendance,
-    }));
+  const present = matched.filter(
+    (student) => student.attendance === "PRESENT",
+  ).length;
+
+  const absent = matched.filter(
+    (student) => student.attendance === "ABSENT",
+  ).length;
+
+  // =====================================================
+  // DETECT NO-CLASS STATE
+  // =====================================================
+
+  const allMatchedAreNoClass =
+    matched.length > 0 && noClass.length === matched.length;
+
+  const mixedNoClass = noClass.length > 0 && noClass.length < matched.length;
 
   return {
     matched,
+
     sheetOnly,
+
     erpOnly,
+
     invalidAttendance,
+
+    noClass,
+
     records,
+
+    allMatchedAreNoClass,
+
+    mixedNoClass,
 
     summary: {
       sheetStudents: sheetStudents.length,
+
       erpStudents: erpStudents.length,
+
       matched: matched.length,
+
       sheetOnly: sheetOnly.length,
+
       erpOnly: erpOnly.length,
 
-      present: records.filter((record) => record.status === "PRESENT").length,
+      present,
 
-      absent: records.filter((record) => record.status === "ABSENT").length,
+      absent,
+
+      noClass: noClass.length,
 
       invalidAttendance: invalidAttendance.length,
     },
