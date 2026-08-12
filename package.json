@@ -4,7 +4,9 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "setup": "node src/setup.js",
+    "start": "node src/index.js",
+    "auth": "node src/auth-setup.js"
   },
   "keywords": [],
   "author": "",
