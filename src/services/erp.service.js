@@ -2,6 +2,12 @@ import fetch from "node-fetch";
 
 const ERP_BASE = "https://admissionsserver.aurora.edu.in/api/v1";
 
+const ERP_ORIGIN = "https://admissions.aurora.edu.in";
+
+// =====================================================
+// AUTH ERROR
+// =====================================================
+
 function throwIfUnauthorized(response) {
   if (response.status === 401 || response.status === 403) {
     throw new Error("ERP session expired or unauthorized. Run: npm run auth");
@@ -9,44 +15,190 @@ function throwIfUnauthorized(response) {
 }
 
 // =====================================================
-// TODAY'S FACULTY SESSIONS
+// COMMON HEADERS
+// =====================================================
+
+function getHeaders(cookie) {
+  return {
+    Cookie: cookie,
+    Accept: "application/json",
+    Origin: ERP_ORIGIN,
+    Referer: `${ERP_ORIGIN}/`,
+  };
+}
+
+// =====================================================
+// TODAY'S ATTENDANCE SESSIONS
 // =====================================================
 
 export async function getTodaySessions(cookie) {
   if (!cookie) {
-    throw new Error("ERP authentication cookie is required.");
+    throw new Error("ERP cookie is required.");
   }
 
   const response = await fetch(`${ERP_BASE}/attendance/sessions/today`, {
-    headers: {
-      Cookie: cookie,
-
-      Accept: "application/json, text/plain, */*",
-
-      Origin: "https://admissions.aurora.edu.in",
-
-      Referer:
-        "https://admissions.aurora.edu.in/faculty-portal/faculty/attendance",
-    },
+    method: "GET",
+    headers: getHeaders(cookie),
   });
 
   throwIfUnauthorized(response);
 
   if (!response.ok) {
-    throw new Error(`Failed to fetch today's sessions: ${response.status}`);
+    throw new Error(`Failed to fetch today's ERP sessions: ${response.status}`);
   }
 
   const body = await response.json();
 
   if (!body?.success) {
-    throw new Error(body?.message || "ERP failed to return today's sessions.");
+    throw new Error(
+      body?.message || body?.error || "Failed to fetch today's ERP sessions.",
+    );
   }
 
-  return body.data;
+  return body.data ?? [];
 }
 
 // =====================================================
-// SECTION ROSTER
+// ATTENDANCE SESSIONS BY DATE
+//
+// IMPORTANT:
+// These appear to represent actual attendance sessions,
+// not necessarily every timetable class.
+// =====================================================
+
+export async function getSessionsByDate(date, cookie) {
+  if (!date) {
+    throw new Error("Attendance date is required.");
+  }
+
+  if (!cookie) {
+    throw new Error("ERP cookie is required.");
+  }
+
+  const url =
+    `${ERP_BASE}/attendance/sessions` +
+    `?fromDate=${encodeURIComponent(date)}` +
+    `&toDate=${encodeURIComponent(date)}`;
+
+  const response = await fetch(url, {
+    method: "GET",
+    headers: getHeaders(cookie),
+  });
+
+  throwIfUnauthorized(response);
+
+  if (!response.ok) {
+    throw new Error(
+      `Failed to fetch attendance sessions for ${date}: ${response.status}`,
+    );
+  }
+
+  const body = await response.json();
+
+  if (!body?.success) {
+    throw new Error(
+      body?.message ||
+        body?.error ||
+        `Failed to fetch attendance sessions for ${date}.`,
+    );
+  }
+
+  return body.data ?? [];
+}
+
+// =====================================================
+// FACULTY TIMETABLE ENTRIES FOR A WEEK
+// =====================================================
+
+export async function getTimetableEntriesForWeek(weekStart, cookie) {
+  if (!weekStart) {
+    throw new Error("weekStart is required.");
+  }
+
+  if (!cookie) {
+    throw new Error("ERP cookie is required.");
+  }
+
+  const url =
+    `${ERP_BASE}/timetable/entries/mine` +
+    `?weekStart=${encodeURIComponent(weekStart)}`;
+
+  const response = await fetch(url, {
+    method: "GET",
+    headers: getHeaders(cookie),
+  });
+
+  throwIfUnauthorized(response);
+
+  if (!response.ok) {
+    throw new Error(
+      `Failed to fetch timetable for week ${weekStart}: ${response.status}`,
+    );
+  }
+
+  const body = await response.json();
+
+  if (!body?.success) {
+    throw new Error(
+      body?.message ||
+        body?.error ||
+        `Failed to fetch timetable for week ${weekStart}.`,
+    );
+  }
+
+  return body.data ?? [];
+}
+
+// =====================================================
+// SPECIFIC SECTION + DATE ATTENDANCE SESSION
+// =====================================================
+
+export async function getSessionBySectionAndDate(sectionId, date, cookie) {
+  if (!sectionId) {
+    throw new Error("sectionId is required.");
+  }
+
+  if (!date) {
+    throw new Error("Date is required.");
+  }
+
+  if (!cookie) {
+    throw new Error("ERP cookie is required.");
+  }
+
+  const url =
+    `${ERP_BASE}/attendance/sessions` +
+    `?sectionId=${encodeURIComponent(sectionId)}` +
+    `&date=${encodeURIComponent(date)}`;
+
+  const response = await fetch(url, {
+    method: "GET",
+    headers: getHeaders(cookie),
+  });
+
+  throwIfUnauthorized(response);
+
+  if (!response.ok) {
+    throw new Error(
+      `Failed to fetch attendance session for ${date}: ${response.status}`,
+    );
+  }
+
+  const body = await response.json();
+
+  if (!body?.success) {
+    throw new Error(
+      body?.message ||
+        body?.error ||
+        `Failed to fetch attendance session for ${date}.`,
+    );
+  }
+
+  return body.data ?? [];
+}
+
+// =====================================================
+// ERP ROSTER
 // =====================================================
 
 export async function getRoster(sectionId, courseOfferingId, cookie) {
@@ -59,24 +211,17 @@ export async function getRoster(sectionId, courseOfferingId, cookie) {
   }
 
   if (!cookie) {
-    throw new Error("ERP authentication cookie is required.");
+    throw new Error("ERP cookie is required.");
   }
 
   const url =
-    `${ERP_BASE}/attendance/sections/${sectionId}/roster` +
-    `?courseOfferingId=${courseOfferingId}`;
+    `${ERP_BASE}/attendance/sections/` +
+    `${encodeURIComponent(sectionId)}/roster` +
+    `?courseOfferingId=${encodeURIComponent(courseOfferingId)}`;
 
   const response = await fetch(url, {
-    headers: {
-      Cookie: cookie,
-
-      Accept: "application/json, text/plain, */*",
-
-      Origin: "https://admissions.aurora.edu.in",
-
-      Referer:
-        "https://admissions.aurora.edu.in/faculty-portal/faculty/attendance",
-    },
+    method: "GET",
+    headers: getHeaders(cookie),
   });
 
   throwIfUnauthorized(response);
@@ -88,10 +233,12 @@ export async function getRoster(sectionId, courseOfferingId, cookie) {
   const body = await response.json();
 
   if (!body?.success) {
-    throw new Error(body?.message || "ERP failed to return roster.");
+    throw new Error(
+      body?.message || body?.error || "Failed to fetch ERP roster.",
+    );
   }
 
-  return body.data;
+  return body.data ?? [];
 }
 
 // =====================================================
@@ -104,55 +251,48 @@ export async function submitAttendance(payload, cookie) {
   }
 
   if (!cookie) {
-    throw new Error("ERP authentication cookie is required.");
+    throw new Error("ERP cookie is required.");
   }
 
-  const url = `${ERP_BASE}/attendance/sessions/mark`;
-
-  const response = await fetch(url, {
+  const response = await fetch(`${ERP_BASE}/attendance/sessions/mark`, {
     method: "POST",
 
     headers: {
-      Cookie: cookie,
+      ...getHeaders(cookie),
 
       "Content-Type": "application/json",
-
-      Accept: "application/json, text/plain, */*",
-
-      Origin: "https://admissions.aurora.edu.in",
-
-      Referer:
-        "https://admissions.aurora.edu.in/faculty-portal/faculty/attendance",
     },
 
     body: JSON.stringify(payload),
   });
 
-  throwIfUnauthorized(response);
-
-  const rawBody = await response.text();
+  const raw = await response.text();
 
   let body;
 
   try {
-    body = JSON.parse(rawBody);
+    body = raw ? JSON.parse(raw) : {};
   } catch {
     body = {
-      raw: rawBody,
+      success: false,
+      message: raw,
     };
   }
 
-  if (!response.ok) {
-    const message =
-      body?.message ||
-      body?.error ||
-      `Attendance submission failed (${response.status})`;
+  throwIfUnauthorized(response);
 
-    throw new Error(message);
+  if (!response.ok) {
+    throw new Error(
+      body?.message ||
+        body?.error ||
+        `ERP attendance submission failed: ${response.status}`,
+    );
   }
 
   if (!body?.success) {
-    throw new Error(body?.message || "ERP rejected attendance submission.");
+    throw new Error(
+      body?.message || body?.error || "ERP rejected attendance submission.",
+    );
   }
 
   return body;
