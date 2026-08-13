@@ -772,7 +772,7 @@ settingsButton.addEventListener("click", () => {
 resetExtensionButton.addEventListener("click", async () => {
   const confirmed = confirm(
     [
-      "Reset Aurora Attendance?",
+      "Reset Attendance Mapper?",
       "",
       "This removes:",
       "• Saved faculty configuration",
