@@ -1,4 +1,4 @@
-# Aurora Attendance Automation
+#  Attendance Automation
 
 Internal faculty attendance automation for Aurora ERP.
 
