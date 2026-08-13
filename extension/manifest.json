@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "Attendance Mapper BETA",
+  "version": "0.5.0",
+  "description": "Preview and safely submit faculty attendance from authorized Google Sheets to ERP.",
+
+  "permissions": ["storage"],
+
+  "host_permissions": [
+    "https://admissionsserver.aurora.edu.in/*",
+    "https://docs.google.com/*"
+  ],
+
+  "background": {
+    "service_worker": "background.js"
+  },
+
+  "action": {
+    "default_title": "Attendance Mapper"
+  }
+}

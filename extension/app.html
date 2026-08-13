@@ -1,0 +1,272 @@
+<!doctype html>
+
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <title>Aurora Attendance</title>
+
+    <link rel="stylesheet" href="app.css" />
+  </head>
+
+  <body>
+    <main class="app-shell">
+      <!-- =========================================
+           HEADER
+      ========================================== -->
+
+      <header class="header">
+        <div>
+          <h1>Aurora Attendance</h1>
+
+          <p>Google Sheet → Aurora ERP</p>
+        </div>
+
+        <div id="loginStatus" class="status status-neutral">Waiting...</div>
+      </header>
+
+      <!-- =========================================
+           PRIVACY CONSENT
+      ========================================== -->
+
+      <section id="consentSection" class="card consent-card hidden">
+        <h2>Before You Continue</h2>
+
+        <p class="lead">
+          Aurora Attendance requires limited access to your existing Aurora ERP
+          session and the Google Spreadsheet you configure.
+        </p>
+
+        <div class="privacy-box">
+          <h3>What the extension accesses</h3>
+
+          <ul>
+            <li>Your currently authenticated Aurora ERP faculty identity.</li>
+
+            <li>Your faculty timetable and attendance sessions.</li>
+
+            <li>Official ERP class rosters.</li>
+
+            <li>
+              Attendance information from the Google Spreadsheet you explicitly
+              configure.
+            </li>
+          </ul>
+
+          <h3>Why this information is used</h3>
+
+          <ul>
+            <li>Match Google Sheet students with the official ERP roster.</li>
+
+            <li>Validate attendance before submission.</li>
+
+            <li>Preview Present and Absent counts.</li>
+
+            <li>Submit attendance only after explicit confirmation.</li>
+          </ul>
+
+          <h3>What the extension does not do</h3>
+
+          <ul>
+            <li>It does not store your ERP authentication cookie.</li>
+
+            <li>
+              It does not send ERP cookies to a developer-controlled server.
+            </li>
+
+            <li>
+              It does not send student records or Google Sheet contents to a
+              developer-controlled server.
+            </li>
+
+            <li>It does not sell user data.</li>
+
+            <li>It does not use attendance information for advertising.</li>
+          </ul>
+
+          <p>
+            Attendance processing occurs inside your browser and communicates
+            directly with Aurora ERP and the configured Google Spreadsheet.
+          </p>
+        </div>
+
+        <label class="consent-check">
+          <input id="consentCheckbox" type="checkbox" />
+
+          <span>
+            I understand and agree to this use of my ERP and Google Sheet data
+            for attendance processing.
+          </span>
+        </label>
+
+        <div class="button-row">
+          <button id="acceptConsentButton" class="primary" disabled>
+            Agree & Continue
+          </button>
+
+          <a href="privacy.html" target="_blank" class="text-link">
+            Read Privacy Policy
+          </a>
+        </div>
+      </section>
+
+      <!-- =========================================
+           SETUP
+      ========================================== -->
+
+      <section id="setupSection" class="card hidden">
+        <div class="section-heading">
+          <div>
+            <h2>Faculty Setup</h2>
+
+            <p>
+              Your faculty identity is detected directly from your Aurora ERP
+              account.
+            </p>
+          </div>
+        </div>
+
+        <label>
+          ERP Faculty
+
+          <input id="facultyNameInput" type="text" readonly />
+        </label>
+
+        <p class="field-note">
+          Faculty identity cannot be edited. To use another faculty account, log
+          into that faculty member's Aurora ERP account first.
+        </p>
+
+        <label>
+          Google Spreadsheet URL or ID
+
+          <input
+            id="spreadsheetInput"
+            type="text"
+            placeholder="https://docs.google.com/spreadsheets/d/..."
+          />
+        </label>
+
+        <button id="detectMappingsButton" class="primary">
+          Detect & Map Classes
+        </button>
+
+        <div id="mappingStatus" class="mapping-status hidden"></div>
+
+        <div id="mappingResults" class="mapping-results hidden"></div>
+
+        <button id="saveSetupButton" class="primary hidden">
+          Verify & Save Setup
+        </button>
+      </section>
+
+      <!-- =========================================
+           ATTENDANCE
+      ========================================== -->
+
+      <section id="attendanceSection" class="hidden">
+        <section class="card">
+          <div class="section-heading">
+            <div>
+              <h2>Attendance</h2>
+
+              <p id="profileDisplay"></p>
+            </div>
+
+            <div class="button-row">
+              <button id="settingsButton" class="secondary">Settings</button>
+
+              <button id="resetExtensionButton" class="danger-outline">
+                Reset Extension
+              </button>
+            </div>
+          </div>
+
+          <div class="grid">
+            <label>
+              Attendance Mode
+
+              <select id="modeSelect">
+                <option value="today">Today</option>
+
+                <option value="historical">Previous Date</option>
+              </select>
+            </label>
+
+            <label id="dateField" class="hidden">
+              Date
+
+              <input id="dateInput" type="date" />
+            </label>
+          </div>
+
+          <button id="loadClassesButton" class="primary">Load Classes</button>
+        </section>
+
+        <!-- =======================================
+             CLASS
+        ======================================== -->
+
+        <section id="classSection" class="card hidden">
+          <h2>Select Class</h2>
+
+          <select id="classSelect"></select>
+
+          <button id="previewButton" class="primary top-gap">
+            Preview Attendance
+          </button>
+        </section>
+
+        <!-- =======================================
+             PREVIEW
+        ======================================== -->
+
+        <section id="previewSection" class="card hidden">
+          <h2>Attendance Preview</h2>
+
+          <div id="previewInfo" class="summary"></div>
+
+          <div id="validationMessage"></div>
+
+          <div id="absenteesSection" class="hidden detail-section">
+            <h3>Absentees</h3>
+
+            <div id="absenteesList"></div>
+          </div>
+
+          <div id="invalidSection" class="hidden detail-section">
+            <h3>Invalid / Missing Attendance</h3>
+
+            <div id="invalidList"></div>
+          </div>
+
+          <button id="submitButton" class="danger hidden">
+            Submit Attendance
+          </button>
+        </section>
+
+        <!-- =======================================
+             RESULT
+        ======================================== -->
+
+        <section id="resultSection" class="card hidden">
+          <h2>ERP Result</h2>
+
+          <div id="resultOutput"></div>
+        </section>
+      </section>
+
+      <footer class="footer">
+        <span> Aurora Attendance BETA </span>
+
+        <span> • </span>
+
+        <a href="privacy.html" target="_blank"> Privacy Policy </a>
+      </footer>
+    </main>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
