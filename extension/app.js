@@ -184,6 +184,25 @@ function showMappingStatus(message) {
 }
 
 // =====================================================
+// STUDENT NAME HELPER
+// =====================================================
+
+function getRosterStudentName(student) {
+  if (student?.name) {
+    return String(student.name).trim();
+  }
+
+  if (student?.studentName) {
+    return String(student.studentName).trim();
+  }
+
+  return [student?.firstName, student?.middleName, student?.lastName]
+    .filter(Boolean)
+    .map((value) => String(value).trim())
+    .join(" ");
+}
+
+// =====================================================
 // ATTENDANCE SESSION STATE
 // =====================================================
 
@@ -240,21 +259,56 @@ function generateSheetCandidates(erpClass) {
 // =====================================================
 
 function calculateRosterCoverage(rows, roster) {
-  const registrations = new Set(
-    rows
-      .map((row) => normalizeRegistrationNo(row["Registration Number"]))
-      .filter(Boolean),
-  );
+  const sheetMap = new Map();
 
-  let matched = 0;
+  // ---------------------------------------------------
+  // BUILD GOOGLE SHEET REGISTRATION MAP
+  // ---------------------------------------------------
+
+  for (const row of rows) {
+    const registrationNo = normalizeRegistrationNo(row["Registration Number"]);
+
+    if (!registrationNo) {
+      continue;
+    }
+
+    // Keep first occurrence if duplicate exists.
+    if (!sheetMap.has(registrationNo)) {
+      sheetMap.set(registrationNo, row);
+    }
+  }
+
+  const matchedStudents = [];
+
+  const missingStudents = [];
+
+  // ---------------------------------------------------
+  // COMPARE EVERY ERP STUDENT AGAINST SHEET
+  // ---------------------------------------------------
 
   for (const student of roster) {
     const registrationNo = normalizeRegistrationNo(student.registrationNo);
 
-    if (registrations.has(registrationNo)) {
-      matched++;
+    if (!registrationNo) {
+      continue;
+    }
+
+    const studentName = getRosterStudentName(student);
+
+    if (sheetMap.has(registrationNo)) {
+      matchedStudents.push({
+        registrationNo,
+        name: studentName,
+      });
+    } else {
+      missingStudents.push({
+        registrationNo,
+        name: studentName,
+      });
     }
   }
+
+  const matched = matchedStudents.length;
 
   const total = roster.length;
 
@@ -264,6 +318,8 @@ function calculateRosterCoverage(rows, roster) {
     matched,
     total,
     coverage,
+    matchedStudents,
+    missingStudents,
   };
 }
 
@@ -275,12 +331,17 @@ async function verifyMapping({ erpClass, spreadsheetId, sheetName }) {
   if (!sheetName) {
     return {
       verified: false,
-
       coverage: 0,
-
+      matched: 0,
+      total: 0,
+      missingStudents: [],
       reason: "Sheet name is missing.",
     };
   }
+
+  // ---------------------------------------------------
+  // FETCH GOOGLE SHEET TAB
+  // ---------------------------------------------------
 
   const sheetResult = await tryFetchSheet({
     spreadsheetId,
@@ -290,26 +351,56 @@ async function verifyMapping({ erpClass, spreadsheetId, sheetName }) {
   if (!sheetResult.success) {
     return {
       verified: false,
-
       coverage: 0,
-
-      reason: sheetResult.error,
+      matched: 0,
+      total: 0,
+      missingStudents: [],
+      reason: sheetResult.error ?? "Unable to read Google Sheet tab.",
     };
   }
+
+  // ---------------------------------------------------
+  // FETCH ERP ROSTER
+  // ---------------------------------------------------
 
   const roster = await getRoster(erpClass.sectionId, erpClass.courseOfferingId);
 
   if (!Array.isArray(roster) || roster.length === 0) {
     return {
       verified: false,
-
       coverage: 0,
-
+      matched: 0,
+      total: 0,
+      missingStudents: [],
       reason: "ERP roster unavailable.",
     };
   }
 
+  // ---------------------------------------------------
+  // CALCULATE COVERAGE
+  // ---------------------------------------------------
+
   const coverage = calculateRosterCoverage(sheetResult.rows, roster);
+
+  let reason = null;
+
+  if (coverage.coverage !== 100) {
+    reason = `${coverage.matched}/${coverage.total} ERP students matched.`;
+
+    if (coverage.missingStudents.length > 0) {
+      const missingText = coverage.missingStudents
+        .map((student) => {
+          if (student.name) {
+            return `${student.registrationNo} (${student.name})`;
+          }
+
+          return student.registrationNo;
+        })
+        .join(", ");
+
+      reason += ` Missing from Sheet: ${missingText}`;
+    }
+  }
 
   return {
     verified: coverage.coverage === 100,
@@ -320,10 +411,11 @@ async function verifyMapping({ erpClass, spreadsheetId, sheetName }) {
 
     total: coverage.total,
 
-    reason:
-      coverage.coverage === 100
-        ? null
-        : `${coverage.matched}/${coverage.total} ERP students matched.`,
+    matchedStudents: coverage.matchedStudents,
+
+    missingStudents: coverage.missingStudents,
+
+    reason,
   };
 }
 
@@ -334,6 +426,12 @@ async function verifyMapping({ erpClass, spreadsheetId, sheetName }) {
 async function autoDetectSheetForClass({ erpClass, spreadsheetId }) {
   const candidates = generateSheetCandidates(erpClass);
 
+  let bestResult = null;
+
+  // ---------------------------------------------------
+  // TRY EVERY GENERATED CANDIDATE
+  // ---------------------------------------------------
+
   for (const candidate of candidates) {
     const verification = await verifyMapping({
       erpClass,
@@ -341,13 +439,31 @@ async function autoDetectSheetForClass({ erpClass, spreadsheetId }) {
       sheetName: candidate,
     });
 
+    // Perfect match.
     if (verification.verified) {
       return {
         ...verification,
-
         sheetName: candidate,
       };
     }
+
+    // Keep the candidate with the highest roster match.
+    if (!bestResult || verification.matched > (bestResult.matched ?? 0)) {
+      bestResult = {
+        ...verification,
+        sheetName: candidate,
+      };
+    }
+  }
+
+  // ---------------------------------------------------
+  // RETURN BEST FAILED CANDIDATE
+  //
+  // This is important so 52/53 information is not lost.
+  // ---------------------------------------------------
+
+  if (bestResult) {
+    return bestResult;
   }
 
   return {
@@ -357,7 +473,16 @@ async function autoDetectSheetForClass({ erpClass, spreadsheetId }) {
 
     coverage: 0,
 
-    reason: "Automatic mapping could not be verified.",
+    matched: 0,
+
+    total: 0,
+
+    missingStudents: [],
+
+    reason:
+      candidates.length === 0
+        ? "Unable to generate a likely Google Sheet tab name for this ERP class."
+        : "Automatic mapping could not be verified.",
   };
 }
 
@@ -375,6 +500,10 @@ function renderMappingResults() {
 
     card.className = "mapping-card";
 
+    // -------------------------------------------------
+    // ERP CLASS INFORMATION
+    // -------------------------------------------------
+
     const classInfo = document.createElement("div");
 
     classInfo.className = "mapping-class";
@@ -390,6 +519,10 @@ function renderMappingResults() {
 
     classInfo.appendChild(details);
 
+    // -------------------------------------------------
+    // SHEET INPUT
+    // -------------------------------------------------
+
     const sheetWrapper = document.createElement("div");
 
     sheetWrapper.className = "mapping-sheet";
@@ -404,21 +537,126 @@ function renderMappingResults() {
 
     sheetWrapper.appendChild(input);
 
+    // -------------------------------------------------
+    // DIAGNOSTICS
+    // -------------------------------------------------
+
+    const diagnostics = document.createElement("div");
+
+    diagnostics.className = "mapping-diagnostics";
+
+    sheetWrapper.appendChild(diagnostics);
+
+    // -------------------------------------------------
+    // VERIFICATION BADGE
+    // -------------------------------------------------
+
     const badge = document.createElement("div");
 
     function refreshBadge() {
       const current = setupMappings[erpClass.sectionCode];
 
+      diagnostics.replaceChildren();
+
+      // ===============================================
+      // VERIFIED
+      // ===============================================
+
       if (current?.verified) {
         badge.textContent = "✓ Verified";
 
         badge.className = "mapping-badge success";
-      } else {
-        badge.textContent = "Verification Required";
 
-        badge.className = "mapping-badge warning";
+        const verifiedMessage = document.createElement("div");
+
+        verifiedMessage.className = "mapping-verified-summary";
+
+        if (current.total && current.matched) {
+          verifiedMessage.textContent = `${current.matched}/${current.total} ERP students matched.`;
+        } else {
+          verifiedMessage.textContent = "ERP roster matched successfully.";
+        }
+
+        diagnostics.appendChild(verifiedMessage);
+
+        return;
+      }
+
+      // ===============================================
+      // NOT VERIFIED
+      // ===============================================
+
+      badge.textContent = "Verification Required";
+
+      badge.className = "mapping-badge warning";
+
+      // ===============================================
+      // COVERAGE SUMMARY
+      // ===============================================
+
+      if (
+        Number.isFinite(current?.matched) &&
+        Number.isFinite(current?.total) &&
+        current.total > 0
+      ) {
+        const coverage = document.createElement("div");
+
+        coverage.className = "mapping-diagnostic-summary";
+
+        coverage.textContent = `${current.matched}/${current.total} ERP students matched.`;
+
+        diagnostics.appendChild(coverage);
+      }
+
+      // ===============================================
+      // MISSING STUDENTS
+      // ===============================================
+
+      if (
+        Array.isArray(current?.missingStudents) &&
+        current.missingStudents.length > 0
+      ) {
+        const heading = document.createElement("div");
+
+        heading.className = "mapping-missing-heading";
+
+        heading.textContent = "Missing from Google Sheet:";
+
+        diagnostics.appendChild(heading);
+
+        for (const student of current.missingStudents) {
+          const row = document.createElement("div");
+
+          row.className = "mapping-missing-student";
+
+          row.textContent =
+            `${student.registrationNo}` +
+            `${student.name ? ` | ${student.name}` : ""}`;
+
+          diagnostics.appendChild(row);
+        }
+
+        return;
+      }
+
+      // ===============================================
+      // GENERAL FAILURE REASON
+      // ===============================================
+
+      if (current?.reason) {
+        const reason = document.createElement("div");
+
+        reason.className = "mapping-diagnostic-summary";
+
+        reason.textContent = current.reason;
+
+        diagnostics.appendChild(reason);
       }
     }
+
+    // -------------------------------------------------
+    // MANUAL SHEET NAME CHANGE
+    // -------------------------------------------------
 
     input.addEventListener("input", () => {
       setupMappings[erpClass.sectionCode] = {
@@ -427,6 +665,15 @@ function renderMappingResults() {
         sheetName: input.value.trim(),
 
         verified: false,
+
+        matched: 0,
+
+        total: 0,
+
+        missingStudents: [],
+
+        reason:
+          "Sheet mapping changed. Click Verify & Save Setup to verify it.",
       };
 
       refreshBadge();
@@ -461,8 +708,11 @@ async function initializeAuthenticatedApp() {
     detectedFacultyName =
       todaySessions.find((session) => session.facultyName)?.facultyName ?? null;
 
-    // Fallback:
-    // today's attendance may have no sessions.
+    // -------------------------------------------------
+    // FALLBACK:
+    // THERE MAY BE NO ATTENDANCE SESSIONS TODAY
+    // -------------------------------------------------
+
     if (!detectedFacultyName) {
       const classes = await getFacultyClasses();
 
@@ -622,6 +872,16 @@ detectMappingsButton.addEventListener("click", async () => {
         sheetName: result.sheetName,
 
         verified: result.verified,
+
+        matched: result.matched ?? 0,
+
+        total: result.total ?? 0,
+
+        coverage: result.coverage ?? 0,
+
+        missingStudents: result.missingStudents ?? [],
+
+        reason: result.reason ?? null,
       };
 
       if (result.verified) {
@@ -667,6 +927,10 @@ saveSetupButton.addEventListener("click", async () => {
 
     saveSetupButton.textContent = "Verifying...";
 
+    // -------------------------------------------------
+    // VERIFY EVERY MAPPING
+    // -------------------------------------------------
+
     for (let index = 0; index < facultyClasses.length; index++) {
       const erpClass = facultyClasses[index];
 
@@ -686,20 +950,58 @@ saveSetupButton.addEventListener("click", async () => {
         sheetName: mapping.sheetName,
       });
 
+      // ===============================================
+      // PRESERVE FULL DIAGNOSTIC INFORMATION
+      // ===============================================
+
       setupMappings[erpClass.sectionCode] = {
         sheetName: mapping.sheetName,
 
         verified: verification.verified,
+
+        matched: verification.matched ?? 0,
+
+        total: verification.total ?? 0,
+
+        coverage: verification.coverage ?? 0,
+
+        missingStudents: verification.missingStudents ?? [],
+
+        reason: verification.reason ?? null,
       };
 
-      if (!verification.verified) {
-        renderMappingResults();
+      // ===============================================
+      // RERENDER SO USER CAN SEE MISSING STUDENT
+      // ===============================================
 
-        throw new Error(
-          `${erpClass.sectionCode} failed roster verification. ${verification.reason ?? ""}`,
-        );
+      renderMappingResults();
+
+      if (!verification.verified) {
+        let message =
+          `${erpClass.sectionCode} failed roster verification. ` +
+          `${verification.matched ?? 0}/${verification.total ?? 0} ERP students matched.`;
+
+        if (verification.missingStudents?.length) {
+          const missing = verification.missingStudents
+            .map((student) => {
+              if (student.name) {
+                return `${student.registrationNo} (${student.name})`;
+              }
+
+              return student.registrationNo;
+            })
+            .join(", ");
+
+          message += ` Missing from Sheet: ${missing}`;
+        }
+
+        throw new Error(message);
       }
     }
+
+    // -------------------------------------------------
+    // FINAL STRICT CHECK
+    // -------------------------------------------------
 
     const classMappings = {};
 
@@ -716,6 +1018,10 @@ saveSetupButton.addEventListener("click", async () => {
         sheetName: mapping.sheetName,
       };
     }
+
+    // -------------------------------------------------
+    // SAVE SAFE PROFILE
+    // -------------------------------------------------
 
     profile = {
       name: detectedFacultyName,
@@ -815,15 +1121,28 @@ loadClassesButton.addEventListener("click", async () => {
 
     previewState = null;
 
+    // -------------------------------------------------
+    // TODAY
+    // -------------------------------------------------
+
     if (modeSelect.value === "today") {
       sessions = await getTodaySessions();
-    } else {
+    }
+
+    // -------------------------------------------------
+    // HISTORICAL
+    // -------------------------------------------------
+    else {
       if (!dateInput.value) {
         throw new Error("Select an attendance date.");
       }
 
       sessions = await getHistoricalSessions(dateInput.value);
     }
+
+    // -------------------------------------------------
+    // ONLY SHOW CLASSES WITH VERIFIED PROFILE MAPPING
+    // -------------------------------------------------
 
     sessions = sessions.filter((session) =>
       Boolean(profile?.classMappings?.[session.sectionCode]),
@@ -956,6 +1275,10 @@ previewButton.addEventListener("click", async () => {
 
     clearElement(invalidList);
 
+    // -------------------------------------------------
+    // SELECT SESSION
+    // -------------------------------------------------
+
     const index = Number(classSelect.value);
 
     selectedSession = sessions[index];
@@ -964,25 +1287,47 @@ previewButton.addEventListener("click", async () => {
       throw new Error("Select an ERP class.");
     }
 
+    // -------------------------------------------------
+    // SAFETY: LOCKED
+    // -------------------------------------------------
+
     if (selectedSession.isLocked) {
       throw new Error("This ERP attendance session is locked.");
     }
 
+    // -------------------------------------------------
+    // SAFETY: ALREADY MARKED
+    // -------------------------------------------------
+
     if (alreadyMarked(selectedSession)) {
       throw new Error(
-        `Attendance already marked. ERP: ${selectedSession.presentCount ?? 0} present, ${selectedSession.absentCount ?? 0} absent.`,
+        `Attendance already marked. ERP: ` +
+          `${selectedSession.presentCount ?? 0} present, ` +
+          `${selectedSession.absentCount ?? 0} absent.`,
       );
     }
+
+    // -------------------------------------------------
+    // ATTENDANCE DATE / SHEET COLUMN
+    // -------------------------------------------------
 
     const { attendanceDate, attendanceColumn } = getAttendanceDateValues(
       selectedSession.date,
     );
+
+    // -------------------------------------------------
+    // VERIFIED CLASS MAPPING
+    // -------------------------------------------------
 
     const mapping = profile?.classMappings?.[selectedSession.sectionCode];
 
     if (!mapping) {
       throw new Error("Verified class mapping was not found.");
     }
+
+    // -------------------------------------------------
+    // GOOGLE SHEET
+    // -------------------------------------------------
 
     const rows = await fetchSheet({
       spreadsheetId: profile.spreadsheetId,
@@ -1004,6 +1349,10 @@ previewButton.addEventListener("click", async () => {
       );
     }
 
+    // -------------------------------------------------
+    // ERP ROSTER
+    // -------------------------------------------------
+
     const roster = await getRoster(
       selectedSession.sectionId,
       selectedSession.courseOfferingId,
@@ -1012,6 +1361,10 @@ previewButton.addEventListener("click", async () => {
     if (!roster.length) {
       throw new Error("ERP returned an empty class roster.");
     }
+
+    // -------------------------------------------------
+    // MATCH ATTENDANCE
+    // -------------------------------------------------
 
     const result = matchAttendance({
       rows,
@@ -1064,7 +1417,7 @@ previewButton.addEventListener("click", async () => {
     }
 
     // =================================================
-    // INVALID / MISSING
+    // INVALID / MISSING ATTENDANCE
     // =================================================
 
     if (result.invalid.length > 0) {
@@ -1096,11 +1449,27 @@ previewButton.addEventListener("click", async () => {
         "Correct the Google Sheet before submitting.",
       ]);
     } else if (!result.safe) {
-      showMessage(validationMessage, "error", [
+      const validationLines = [
         "Validation failed.",
         `ERP-only students: ${result.erpOnly.length}`,
         `Invalid attendance values: ${result.invalid.length}`,
-      ]);
+      ];
+
+      // -----------------------------------------------
+      // ALSO SHOW ERP STUDENTS MISSING FROM SHEET
+      // -----------------------------------------------
+
+      if (result.erpOnly.length > 0) {
+        validationLines.push("", "Missing from Google Sheet:");
+
+        for (const student of result.erpOnly) {
+          validationLines.push(
+            `${student.registrationNo} | ${student.name || "Student"}`,
+          );
+        }
+      }
+
+      showMessage(validationMessage, "error", validationLines);
     } else {
       showMessage(validationMessage, "success", [
         "✓ Validation Passed",
@@ -1134,6 +1503,10 @@ submitButton.addEventListener("click", async () => {
 
     const { session, attendanceDate, result } = previewState;
 
+    // -------------------------------------------------
+    // FINAL USER CONFIRMATION
+    // -------------------------------------------------
+
     const confirmed = confirm(
       [
         "Submit attendance to Aurora ERP?",
@@ -1155,6 +1528,10 @@ submitButton.addEventListener("click", async () => {
     submitButton.disabled = true;
 
     submitButton.textContent = "Submitting...";
+
+    // -------------------------------------------------
+    // EXACT ERP PAYLOAD
+    // -------------------------------------------------
 
     const payload = {
       timetableEntryId: session.timetableEntryId,
@@ -1178,6 +1555,10 @@ submitButton.addEventListener("click", async () => {
 
     const absentCount = Number(data?.absentCount);
 
+    // -------------------------------------------------
+    // VERIFY ERP RESPONSE
+    // -------------------------------------------------
+
     const countsMatch =
       totalStudents === result.records.length &&
       presentCount === result.present &&
@@ -1188,19 +1569,34 @@ submitButton.addEventListener("click", async () => {
     if (!countsMatch) {
       showMessage(resultOutput, "error", [
         "ERP saved attendance, but the returned counts do not match the preview.",
-        `ERP Total: ${Number.isFinite(totalStudents) ? totalStudents : "Unknown"}`,
-        `ERP Present: ${Number.isFinite(presentCount) ? presentCount : "Unknown"}`,
+
+        `ERP Total: ${
+          Number.isFinite(totalStudents) ? totalStudents : "Unknown"
+        }`,
+
+        `ERP Present: ${
+          Number.isFinite(presentCount) ? presentCount : "Unknown"
+        }`,
+
         `ERP Absent: ${Number.isFinite(absentCount) ? absentCount : "Unknown"}`,
       ]);
 
       return;
     }
 
+    // -------------------------------------------------
+    // SUCCESS
+    // -------------------------------------------------
+
     showMessage(resultOutput, "success", [
       "✓ Attendance Submitted Successfully",
+
       `ERP Total: ${totalStudents}`,
+
       `ERP Present: ${presentCount}`,
+
       `ERP Absent: ${absentCount}`,
+
       "ERP response matches the Google Sheet preview.",
     ]);
 
